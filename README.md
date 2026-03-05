@@ -20,5 +20,5 @@ Welcome! This repository showcases my work at the intersection of **Economic The
 * **Languages:** Portuguese (Native), English (Full Professional Proficiency), Spanish (Intermediate).
 
 ## 📫 Contact Me
-* **LinkedIn:** [Seu Link do LinkedIn aqui]
+* **LinkedIn:** [(https://www.linkedin.com/in/victor-kendy-ioshisaqui-297190346/)]
 * **Location:** São Paulo, Brazil
