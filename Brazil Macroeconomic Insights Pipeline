@@ -1,0 +1,49 @@
+import pandas as pd
+import requests
+import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
+
+# Função para extrair dados direto da API do Banco Central
+def get_bcb_series(code, name):
+    url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{code}/dados?formato=json"
+    response = requests.get(url)
+    df = pd.DataFrame(response.json())
+    df['data'] = pd.to_datetime(df['data'], dayfirst=True)
+    df['valor'] = pd.to_numeric(df['valor'])
+    return df.set_index('data').rename(columns={'valor': name})
+
+# 1. Definição do período (últimos 5 anos)
+start_date = datetime.now() - timedelta(days=5*365)
+
+# 2. Coleta de dados (SGS: 433=IPCA mensal, 432=Selic, 10813=USD)
+print("Coletando dados do BCB...")
+ipca = get_bcb_series(433, 'IPCA')
+selic = get_bcb_series(432, 'Selic')
+usd = get_bcb_series(10813, 'USD')
+
+# 3. Tratamento e Alinhamento
+df_macro = ipca[ipca.index >= start_date]
+df_selic = selic[selic.index >= start_date].resample('MS').mean()
+df_usd = usd[usd.index >= start_date].resample('MS').last()
+
+# 4. Visualização Profissional
+plt.style.use('ggplot')
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+
+# Subplot 1: Inflação vs Juros
+ax1.plot(df_macro.index, df_macro['IPCA'], label='IPCA (Mensal %)', color='#E24A33', marker='o', linewidth=1.5)
+ax1.plot(df_selic.index, df_selic['Selic'], label='Selic (% a.a.)', color='#348ABD', linewidth=3, linestyle='--')
+ax1.set_title('Brazil: Monetary Policy & Inflation Tracking', fontsize=16, fontweight='bold', loc='left')
+ax1.set_ylabel('Percentage (%)')
+ax1.legend(facecolor='white')
+
+# Subplot 2: Câmbio USD/BRL
+ax2.fill_between(df_usd.index, df_usd['USD'], color='#8EBA42', alpha=0.2)
+ax2.plot(df_usd.index, df_usd['USD'], label='USD/BRL Exchange Rate', color='#8EBA42', linewidth=2.5)
+ax2.set_title('Foreign Exchange: USD/BRL Trend', fontsize=16, fontweight='bold', loc='left')
+ax2.set_ylabel('BRL / USD')
+ax2.legend(facecolor='white')
+
+plt.tight_layout(pad=3.0)
+plt.savefig('brazil_macro_dashboard.png')
+plt.show()
