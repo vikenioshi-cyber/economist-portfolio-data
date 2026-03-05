@@ -4,46 +4,123 @@ import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
 # Função para extrair dados direto da API do Banco Central
-def get_bcb_series(code, name):
+def get_bcb_series(code, name, start_date=None, end_date=None):
     url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{code}/dados?formato=json"
+    if start_date:
+        url += f"&dataInicial={start_date.strftime('%d/%m/%Y')}"
+    if end_date:
+        url += f"&dataFinal={end_date.strftime('%d/%m/%Y')}"
+
     response = requests.get(url)
-    df = pd.DataFrame(response.json())
+
+    try:
+        json_data = response.json()
+    except requests.exceptions.JSONDecodeError as e:
+        print(f"DEBUG: JSONDecodeError for {name} (Code: {code}). URL: {url}")
+        print(f"DEBUG: Raw response text: {response.text}")
+        # If JSON decoding fails, return an empty DataFrame with a DatetimeIndex
+        empty_df = pd.DataFrame(columns=[name])
+        empty_df.index = pd.to_datetime([])
+        empty_df.index.name = 'data'
+        return empty_df
+
+    # Check if json_data is not a list, or if it's an empty list
+    # or if the first element is not a dictionary (implying list of scalars or other unexpected format)
+    if not isinstance(json_data, list) or not json_data or not isinstance(json_data[0], dict):
+        # For debugging: print URL and raw JSON if no data is found
+        print(f"DEBUG: No or unexpected data for {name} (Code: {code}). URL: {url}")
+        print(f"DEBUG: Raw JSON response for {name}: {json_data}")
+        # If no data is found or format is unexpected, return an empty DataFrame with a DatetimeIndex
+        empty_df = pd.DataFrame(columns=[name])
+        empty_df.index = pd.to_datetime([]) # Ensures the index is a DatetimeIndex
+        empty_df.index.name = 'data' # Set the index name
+        return empty_df
+
+    df = pd.DataFrame(json_data)
     df['data'] = pd.to_datetime(df['data'], dayfirst=True)
     df['valor'] = pd.to_numeric(df['valor'])
     return df.set_index('data').rename(columns={'valor': name})
 
 # 1. Definição do período (últimos 5 anos)
-start_date = datetime.now() - timedelta(days=5*365)
+start_date_plot = datetime.now() - timedelta(days=5*365)
+end_date_plot = datetime.now()
 
-# 2. Coleta de dados (SGS: 433=IPCA mensal, 432=Selic, 10813=USD)
+# For BCB API calls, use a broader date range if needed, or pass current start/end dates
+# The API suggests 10 years max for daily series if dates are not specified.
+# Let's use the current 5-year range for consistency with plotting.
+api_start_date = start_date_plot
+api_end_date = end_date_plot
+
+# 2. Coleta de dados (SGS: 433=IPCA mensal, 432=Selic, 1=USD)
 print("Coletando dados do BCB...")
-ipca = get_bcb_series(433, 'IPCA')
-selic = get_bcb_series(432, 'Selic')
-usd = get_bcb_series(10813, 'USD')
+ipca = get_bcb_series(433, 'IPCA', start_date=api_start_date, end_date=api_end_date)
+selic = get_bcb_series(432, 'Selic', start_date=api_start_date, end_date=api_end_date) # Changed Selic code to 432
+usd = get_bcb_series(1, 'USD', start_date=api_start_date, end_date=api_end_date) # Changed USD code to 1
+
+# For debugging: print head of raw USD data and processed df_usd
+print("Raw USD data head:")
+display(usd.head())
+print("Processed df_usd head:")
 
 # 3. Tratamento e Alinhamento
-df_macro = ipca[ipca.index >= start_date]
-df_selic = selic[selic.index >= start_date].resample('MS').mean()
-df_usd = usd[usd.index >= start_date].resample('MS').last()
+df_macro = ipca[ipca.index >= start_date_plot]
+df_selic = selic[selic.index >= start_date_plot].resample('MS').mean()
+df_usd = usd[usd.index >= start_date_plot].resample('MS').last()
+
+display(df_usd.head())
 
 # 4. Visualização Profissional
 plt.style.use('ggplot')
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+fig, ax1 = plt.subplots(figsize=(12, 6))
 
-# Subplot 1: Inflação vs Juros
-ax1.plot(df_macro.index, df_macro['IPCA'], label='IPCA (Mensal %)', color='#E24A33', marker='o', linewidth=1.5)
-ax1.plot(df_selic.index, df_selic['Selic'], label='Selic (% a.a.)', color='#348ABD', linewidth=3, linestyle='--')
-ax1.set_title('Brazil: Monetary Policy & Inflation Tracking', fontsize=16, fontweight='bold', loc='left')
-ax1.set_ylabel('Percentage (%)')
-ax1.legend(facecolor='white')
+# Plot IPCA on the primary left y-axis
+if not df_macro.empty:
+    ax1.plot(df_macro.index, df_macro['IPCA'], label='IPCA (Mensal %)', color='#E24A33', marker='o', linewidth=1.5)
+    ax1.set_ylabel('IPCA (Mensal %)', color='#E24A33')
+    ax1.tick_params(axis='y', labelcolor='#E24A33')
+else:
+    print("Warning: IPCA data is empty. Skipping plot for IPCA.")
 
-# Subplot 2: Câmbio USD/BRL
-ax2.fill_between(df_usd.index, df_usd['USD'], color='#8EBA42', alpha=0.2)
-ax2.plot(df_usd.index, df_usd['USD'], label='USD/BRL Exchange Rate', color='#8EBA42', linewidth=2.5)
-ax2.set_title('Foreign Exchange: USD/BRL Trend', fontsize=16, fontweight='bold', loc='left')
-ax2.set_ylabel('BRL / USD')
-ax2.legend(facecolor='white')
+# Create a second y-axis for Selic (right side)
+ax_selic = ax1.twinx()
+if not df_selic.empty:
+    ax_selic.plot(df_selic.index, df_selic['Selic'] * 100, label='Selic (% a.a.)', color='#348ABD', linewidth=3, linestyle='--')
+    ax_selic.set_ylabel('Selic (% a.a.)', color='#348ABD')
+    ax_selic.tick_params(axis='y', labelcolor='#348ABD')
+    # Position the Selic axis slightly to the right of the plot
+    ax_selic.spines['right'].set_position(('outward', 0))
+else:
+    print("Warning: Selic data is empty. Skipping plot for Selic.")
 
-plt.tight_layout(pad=3.0)
-plt.savefig('brazil_macro_dashboard.png')
+# Create a third y-axis for USD (right side, further offset)
+ax_usd = ax1.twinx()
+if not df_usd.empty:
+    ax_usd.plot(df_usd.index, df_usd['USD'], label='USD/BRL Exchange Rate', color='#8EBA42', linewidth=2.5)
+    ax_usd.set_ylabel('BRL / USD', color='#8EBA42')
+    ax_usd.tick_params(axis='y', labelcolor='#8EBA42')
+    # Position the USD axis further to the right
+    ax_usd.spines['right'].set_position(('outward', 60)) # Adjust offset as needed
+else:
+    print("Warning: USD data is empty. Skipping plot for USD.")
+
+# Set common x-axis label
+ax1.set_xlabel('Date')
+
+# Add title
+plt.title('Brazil Macroeconomic Indicators Over Time', fontsize=16, fontweight='bold')
+
+# Collect all lines and labels for a single legend
+lines1, labels1 = ax1.get_legend_handles_labels()
+lines_selic, labels_selic = ax_selic.get_legend_handles_labels()
+lines_usd, labels_usd = ax_usd.get_legend_handles_labels()
+
+all_lines = lines1 + lines_selic + lines_usd
+all_labels = labels1 + labels_selic + labels_usd
+
+fig.legend(all_lines, all_labels, loc='upper left', bbox_to_anchor=(0.1, 0.9))
+
+# Adjust layout to prevent labels from overlapping. Increase rect[2] to make space for right axes.
+plt.tight_layout(rect=[0, 0, 0.85, 1]) # Adjust rect[2] value (0.85) if axes labels overlap
+
+plt.savefig('brazil_macro_combined_dashboard.png')
 plt.show()
